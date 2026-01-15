@@ -30,6 +30,16 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Message).IsRequired();
+            entity.Property(e => e.PatientId).IsRequired();
+            
+            // 設定外鍵關聯
+            entity.HasOne(e => e.Patient)
+                  .WithMany(p => p.MedicalOrders)
+                  .HasForeignKey(e => e.PatientId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            
+            // 建立索引以提升查詢效能
+            entity.HasIndex(e => e.PatientId);
         });
     }
 }

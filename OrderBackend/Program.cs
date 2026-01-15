@@ -79,6 +79,17 @@ app.MapGet("/api/medicalorders", async (ApplicationDbContext db) =>
 })
 .WithName("GetAllMedicalOrders");
 
+// GET medical orders by patient id
+app.MapGet("/api/patients/{patientId}/medicalorders", async (string patientId, ApplicationDbContext db) =>
+{
+    var orders = await db.MedicalOrders
+        .Where(o => o.PatientId == patientId)
+        .ToListAsync();
+    
+    return orders.Any() ? Results.Ok(orders) : Results.NotFound();
+})
+.WithName("GetMedicalOrdersByPatientId");
+
 // GET medical order by id
 app.MapGet("/api/medicalorders/{id}", async (string id, ApplicationDbContext db) =>
 {
