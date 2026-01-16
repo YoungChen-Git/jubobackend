@@ -24,16 +24,18 @@ namespace OrderBackend.Migrations
 
             modelBuilder.Entity("OrderBackend.Models.MedicalOrder", b =>
                 {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("Message")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("PatientId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("PatientId")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -44,14 +46,13 @@ namespace OrderBackend.Migrations
 
             modelBuilder.Entity("OrderBackend.Models.Patient", b =>
                 {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("OrderId")
                         .IsRequired()
                         .HasColumnType("text");
 

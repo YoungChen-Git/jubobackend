@@ -13,6 +13,17 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+// Configure CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
 // Configure PostgreSQL Database
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -43,6 +54,41 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+// 自動執行資料庫 Migration（可透過環境變數控制）
+var autoMigrate = app.Configuration.GetValue<bool>("AutoMigrate", true);
+if (autoMigrate)
+{
+    using (var scope = app.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
+        try
+        {
+            var context = services.GetRequiredService<ApplicationDbContext>();
+            
+            // 自動套用待處理的 migrations
+            if (context.Database.GetPendingMigrations().Any())
+            {
+                Console.WriteLine("正在套用資料庫 Migrations...");
+                context.Database.Migrate();
+                Console.WriteLine("資料庫 Migrations 完成！");
+            }
+            else
+            {
+                Console.WriteLine("資料庫已是最新版本，無需執行 Migration。");
+            }
+        }
+        catch (Exception ex)
+        {
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "執行資料庫 Migration 時發生錯誤");
+            throw; // 如果 Migration 失敗，應用程式不應該啟動
+        }
+    }
+}
+
+// 使用 CORS
+app.UseCors("AllowAll");
 
 // 使用 Request/Response Logging Middleware
 app.UseMiddleware<RequestResponseLoggingMiddleware>();
@@ -133,23 +179,32 @@ app.MapPost("/api/auth/login", async (
 // GET all patients
 app.MapGet("/api/patients", async (ApplicationDbContext db) =>
 {
-    return await db.Patients.ToListAsync();
+    return await db.Patients
+        .Include(p => p.MedicalOrders)
+        .ToListAsync();
 })
 .WithName("GetAllPatients")
 .RequireAuthorization();
 
 // GET patient by id
-app.MapGet("/api/patients/{id}", async (string id, ApplicationDbContext db) =>
+app.MapGet("/api/patients/{id}", async (int id, ApplicationDbContext db) =>
 {
-    var patient = await db.Patients.FindAsync(id);
+    var patient = await db.Patients
+        .Include(p => p.MedicalOrders)
+        .FirstOrDefaultAsync(p => p.Id == id);
     return patient is not null ? Results.Ok(patient) : Results.NotFound();
 })
 .WithName("GetPatientById")
 .RequireAuthorization();
 
 // POST create new patient
-app.MapPost("/api/patients", async (Patient patient, ApplicationDbContext db) =>
+app.MapPost("/api/patients", async (ApplicationDbContext db, PatientCreateRequest request) =>
 {
+    var patient = new Patient
+    {
+        Name = request.Name
+    };
+    
     db.Patients.Add(patient);
     await db.SaveChangesAsync();
     return Results.Created($"/api/patients/{patient.Id}", patient);
@@ -158,13 +213,12 @@ app.MapPost("/api/patients", async (Patient patient, ApplicationDbContext db) =>
 .RequireAuthorization();
 
 // PUT update patient
-app.MapPut("/api/patients/{id}", async (string id, Patient updatedPatient, ApplicationDbContext db) =>
+app.MapPut("/api/patients/{id}", async (int id, PatientUpdateRequest request, ApplicationDbContext db) =>
 {
     var patient = await db.Patients.FindAsync(id);
     if (patient is null) return Results.NotFound();
 
-    patient.Name = updatedPatient.Name;
-    patient.OrderId = updatedPatient.OrderId;
+    patient.Name = request.Name;
 
     await db.SaveChangesAsync();
     return Results.Ok(patient);
@@ -173,7 +227,7 @@ app.MapPut("/api/patients/{id}", async (string id, Patient updatedPatient, Appli
 .RequireAuthorization();
 
 // DELETE patient
-app.MapDelete("/api/patients/{id}", async (string id, ApplicationDbContext db) =>
+app.MapDelete("/api/patients/{id}", async (int id, ApplicationDbContext db) =>
 {
     var patient = await db.Patients.FindAsync(id);
     if (patient is null) return Results.NotFound();
@@ -195,7 +249,7 @@ app.MapGet("/api/medicalorders", async (ApplicationDbContext db) =>
 .RequireAuthorization();
 
 // GET medical orders by patient id
-app.MapGet("/api/patients/{patientId}/medicalorders", async (string patientId, ApplicationDbContext db) =>
+app.MapGet("/api/patients/{patientId}/medicalorders", async (int patientId, ApplicationDbContext db) =>
 {
     var orders = await db.MedicalOrders
         .Where(o => o.PatientId == patientId)
@@ -207,7 +261,7 @@ app.MapGet("/api/patients/{patientId}/medicalorders", async (string patientId, A
 .RequireAuthorization();
 
 // GET medical order by id
-app.MapGet("/api/medicalorders/{id}", async (string id, ApplicationDbContext db) =>
+app.MapGet("/api/medicalorders/{id}", async (int id, ApplicationDbContext db) =>
 {
     var order = await db.MedicalOrders.FindAsync(id);
     return order is not null ? Results.Ok(order) : Results.NotFound();
@@ -216,8 +270,21 @@ app.MapGet("/api/medicalorders/{id}", async (string id, ApplicationDbContext db)
 .RequireAuthorization();
 
 // POST create new medical order
-app.MapPost("/api/medicalorders", async (MedicalOrder order, ApplicationDbContext db) =>
+app.MapPost("/api/medicalorders", async (ApplicationDbContext db, MedicalOrderCreateRequest request) =>
 {
+    // 驗證病人是否存在
+    var patientExists = await db.Patients.AnyAsync(p => p.Id == request.PatientId);
+    if (!patientExists)
+    {
+        return Results.BadRequest(new { message = "Patient not found" });
+    }
+    
+    var order = new MedicalOrder
+    {
+        Message = request.Message,
+        PatientId = request.PatientId
+    };
+    
     db.MedicalOrders.Add(order);
     await db.SaveChangesAsync();
     return Results.Created($"/api/medicalorders/{order.Id}", order);
@@ -226,12 +293,12 @@ app.MapPost("/api/medicalorders", async (MedicalOrder order, ApplicationDbContex
 .RequireAuthorization();
 
 // PUT update medical order
-app.MapPut("/api/medicalorders/{id}", async (string id, MedicalOrder updatedOrder, ApplicationDbContext db) =>
+app.MapPut("/api/medicalorders/{id}", async (int id, MedicalOrderUpdateRequest request, ApplicationDbContext db) =>
 {
     var order = await db.MedicalOrders.FindAsync(id);
     if (order is null) return Results.NotFound();
 
-    order.Message = updatedOrder.Message;
+    order.Message = request.Message;
 
     await db.SaveChangesAsync();
     return Results.Ok(order);
@@ -240,7 +307,7 @@ app.MapPut("/api/medicalorders/{id}", async (string id, MedicalOrder updatedOrde
 .RequireAuthorization();
 
 // DELETE medical order
-app.MapDelete("/api/medicalorders/{id}", async (string id, ApplicationDbContext db) =>
+app.MapDelete("/api/medicalorders/{id}", async (int id, ApplicationDbContext db) =>
 {
     var order = await db.MedicalOrders.FindAsync(id);
     if (order is null) return Results.NotFound();
