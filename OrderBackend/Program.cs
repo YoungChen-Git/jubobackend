@@ -88,13 +88,13 @@ if (autoMigrate)
 }
 
 // 使用 CORS
-// app.UseCors("AllowAll");
+app.UseCors("AllowAll");
 
 // 使用 Request/Response Logging Middleware
 app.UseMiddleware<RequestResponseLoggingMiddleware>();
 
-// app.UseAuthentication();
-// app.UseAuthorization();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.UseHttpsRedirection();
 
